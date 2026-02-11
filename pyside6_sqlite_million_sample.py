@@ -41,6 +41,13 @@ def random_text(min_len: int = MIN_LEN, max_len: int = MAX_LEN) -> str:
 
     SQLite に大量投入するテストデータとして使うため、
     読みやすさより生成コストの軽さを優先している。
+
+    Args:
+        min_len: 生成する文字列の最小長。
+        max_len: 生成する文字列の最大長。
+
+    Returns:
+        ランダムに生成した英数字文字列。
     """
     # レコードごとに長さを変えることで、実運用に近い可変長データにする。
     length = random.randint(min_len, max_len)
@@ -56,6 +63,10 @@ def ensure_database(db_path: Path = DB_PATH, target_rows: int = TARGET_ROWS) -> 
 
     - すでに件数が足りていれば何もしない（再実行可能）
     - 不足している場合だけ差分をバッチ INSERT する
+
+    Args:
+        db_path: 準備対象の SQLite ファイルパス。
+        target_rows: 最終的に確保したいレコード件数。
     """
     # with を使うことで、例外時にも接続が自動でクローズされる。
     with sqlite3.connect(db_path) as conn:
@@ -107,6 +118,13 @@ class SqliteTableModel(QAbstractTableModel):
     """
 
     def __init__(self, db_path: Path, parent=None) -> None:
+        """
+        モデルの初期化を行い、SQLite 接続とキャッシュ状態を準備する。
+
+        Args:
+            db_path: 読み込み対象の SQLite ファイルパス。
+            parent: Qt 親オブジェクト。
+        """
         super().__init__(parent)
         # モデル専用の DB 接続。
         # UI からのアクセスはメインスレッドだけなので簡素な構成にしている。
@@ -126,18 +144,47 @@ class SqliteTableModel(QAbstractTableModel):
         self._cache_size = 1000
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        """
+        ビューへ総行数を返す。
+
+        Args:
+            parent: 親 index（テーブルは階層を持たないため常に無効想定）。
+
+        Returns:
+            モデルの総行数。
+        """
         # フラットな表なので親を持つ行は存在しない。
         if parent.isValid():
             return 0
         return self._row_count
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        """
+        ビューへ列数を返す。
+
+        Args:
+            parent: 親 index（テーブルは階層を持たないため常に無効想定）。
+
+        Returns:
+            固定列数（id / value の2列）。
+        """
         # 2列固定（id / value）
         if parent.isValid():
             return 0
         return len(self._headers)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+        """
+        ヘッダ表示文字列を返す。
+
+        Args:
+            section: 行または列の番号。
+            orientation: 水平ヘッダか垂直ヘッダか。
+            role: 要求される表示ロール。
+
+        Returns:
+            表示文字列。対象外ロールでは None。
+        """
         # 表示用ロール以外（編集・装飾など）はこのサンプルでは未対応。
         if role != Qt.DisplayRole:
             return None
@@ -148,6 +195,16 @@ class SqliteTableModel(QAbstractTableModel):
         return section + 1
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        """
+        指定セルの表示データを返す。
+
+        Args:
+            index: 取得対象セルの index。
+            role: 要求される表示ロール。
+
+        Returns:
+            セル値（id または value）。取得不可時は None。
+        """
         # 不正インデックスや非表示ロールには値を返さない。
         if not index.isValid() or role != Qt.DisplayRole:
             return None
@@ -167,6 +224,12 @@ class SqliteTableModel(QAbstractTableModel):
         return record[index.column()]
 
     def _ensure_cache(self, row: int) -> None:
+        """
+        指定行を含むようにキャッシュを更新する内部メソッド。
+
+        Args:
+            row: モデル全体での絶対行番号。
+        """
         # すでに必要行がキャッシュ内なら何もしない。
         if self._cache_start <= row < self._cache_start + len(self._cache_rows):
             return
@@ -185,6 +248,7 @@ class SqliteTableModel(QAbstractTableModel):
         self._cache_rows = rows
 
     def close(self) -> None:
+        """モデルが保持する SQLite 接続を明示的に閉じる。"""
         # 明示的に DB 接続を閉じて終了時の後始末を行う。
         self.conn.close()
 
@@ -193,6 +257,12 @@ class MainWindow(QMainWindow):
     """上下2ペイン構成のメイン画面。上:一覧、下:選択行の詳細表示。"""
 
     def __init__(self, db_path: Path) -> None:
+        """
+        メインウィンドウと子ウィジェットを生成し、イベント配線を行う。
+
+        Args:
+            db_path: 一覧表示対象の SQLite ファイルパス。
+        """
         super().__init__()
         # ウィンドウ全体設定
         self.setWindowTitle("SQLite 3,000,000 rows viewer")
@@ -244,6 +314,12 @@ class MainWindow(QMainWindow):
             self.table.selectRow(0)
 
     def closeEvent(self, event) -> None:
+        """
+        ウィンドウクローズ時の後始末を行う。
+
+        Args:
+            event: Qt から渡される close イベント。
+        """
         # ウィンドウを閉じる時にモデルの DB 接続を確実に閉じる。
         self.model.close()
         super().closeEvent(event)
@@ -254,10 +330,24 @@ class MainWindow(QMainWindow):
 
         必要に応じて、このメソッド内で row_id / row_value を使って
         表示用テキストへ変換する実装を追加する。
+
+        Args:
+            row_id: 選択行の主キー id。
+            row_value: 選択行の value 文字列。
+
+        Returns:
+            下ペインへ表示する文字列。
         """
         raise NotImplementedError
 
     def _on_current_row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
+        """
+        一覧の選択変更に追従して下ペイン内容を更新する。
+
+        Args:
+            current: 新しく選択された行 index。
+            previous: 直前に選択されていた行 index。
+        """
         # 選択行の value を下ペインへ反映する。
         del previous  # 未使用
         if not current.isValid():
